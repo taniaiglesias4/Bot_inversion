@@ -9,7 +9,6 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
 def enviar_alerta(mensaje):
   if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-    print('Error: Faltan las claves de Telegram')
     print(mensaje)
     return
   url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'
@@ -21,61 +20,80 @@ def enviar_alerta(mensaje):
   requests.post(url, json=payload)
 
 
-def obtener_top_premarket_acciones():
-  tickers_watchlist = [
-      'AAPL',
-      'TSLA',
-      'NVDA',
-      'AMD',
-      'AMZN',
-      'MSFT',
-      'GOOGL',
-      'META',
-      'NFLX',
-      'PLTR',
-      'COIN',
-      'MARA',
+def obtener_top_scalping_baratas():
+  # Lista ampliada de acciones populares de bajo precio (< 5$) con alta volatilidad para scalping
+  watchlist_baratas = [
+      'NIO',
+      'SIRI',
+      'PLUG',
+      'SOFI',
+      'F',
+      'PTON',
       'INTC',
-      'BA',
-      'SPY',
-      'QQQ',
+      'SNAP',
+      'NOK',
+      'AMC',
+      'GME',
+      'MULN',
+      'VERV',
+      'OPEN',
+      'TAL',
+      'BITF',
   ]
-  datos_premarket = []
+  datos_mercado = []
 
-  for ticker in tickers_watchlist:
+  for ticker in watchlist_baratas:
     try:
       stock = yf.Ticker(ticker)
-      hist = stock.history(period='2d', interval='1d')
-      if len(hist) < 2:
+      hist = stock.history(period='1d', interval='5m')  # Datos intradía
+      if hist.empty:
         continue
-      cierre_ayer = hist['Close'].iloc[-2]
-      info = stock.fast_info
-      precio_actual = getattr(info, 'last_price', None)
 
-      if precio_actual and cierre_ayer:
-        gap_percent = ((precio_actual - cierre_ayer) / cierre_ayer) * 100
-        datos_premarket.append(
-            {'ticker': ticker, 'gap': gap_percent, 'precio': precio_actual}
+      precio_actual = hist['Close'].iloc[-1]
+      volumen_hoy = hist['Volume'].sum()
+
+      # FILTRO: Solo acciones de menos de 5 dólares
+      if precio_actual <= 5.0:
+        # Calculamos una variación rápida o volatilidad basada en el rango intradía
+        max_sesion = hist['High'].max()
+        min_sesion = hist['Low'].min()
+        rango_volatilidad = (
+            ((max_sesion - min_sesion) / min_sesion) * 100
+            if min_sesion > 0
+            else 0
         )
+
+        datos_mercado.append({
+            'ticker': ticker,
+            'precio': precio_actual,
+            'volumen': volumen_hoy,
+            'volatilidad': rango_volatilidad,
+        })
     except Exception:
       continue
 
-  df = pd.DataFrame(datos_premarket)
+  df = pd.DataFrame(datos_mercado)
   if df.empty:
-    return 'No se pudieron obtener datos del premarket hoy.'
+    return (
+        '⚠️ No se encontraron acciones por debajo de $5 con suficientes datos'
+        ' en este momento.'
+    )
 
-  df_top3 = df.sort_values(by='gap', ascending=False).head(3)
-  mensaje = '🚨 *TOP 3 ACCIONES PREMARKET (DIARIO)* 🚨\n\n'
+  # Ordenar por mayor volumen y volatilidad intradía (ideal para scalping)
+  df_top3 = df.sort_values(by='volumen', ascending=False).head(3)
+
+  mensaje = '⚡ *TOP 3 SCALPING (< $5) - MERCADO ABIERTO* ⚡\n\n'
   for i, row in enumerate(df_top3.iterrows(), 1):
     data = row[1]
     mensaje += (
-        f"{i}. *{data['ticker']}* ➔ Gap: `+{data['gap']:.2f}%` | Precio:"
-        f" `${data['precio']:.2f}`\n"
+        f"*{i}. {data['ticker']}* ➔ Precio: `${data['precio']:.2f}`\n"
+        f"   📊 Vol: `{data['volumen']:,.0f}` | Rango: `+{data['volatilidad']:.2f}%`\n\n"
     )
-  mensaje += '\n💡 Abre TradingView en tu Honor para analizar tus entradas.'
+
+  mensaje += '💡 *Ideal para buscar patrones de rotura en gráficos de 1m o 5m.*'
   return mensaje
 
 
 if __name__ == '__main__':
-  resultado = obtener_top_premarket_acciones()
+  resultado = obtener_top_scalping_baratas()
   enviar_alerta(resultado)
