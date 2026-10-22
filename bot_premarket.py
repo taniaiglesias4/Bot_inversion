@@ -1,7 +1,6 @@
 import os
 import requests
 import yfinance as yf
-from yfinance import EquityQuery
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
@@ -9,7 +8,7 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
 def enviar_alerta(mensaje):
   if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-    print(mensaje)
+    print('⚠️ Faltan credenciales de Telegram.')
     return
   url = f'https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage'
   payload = {
@@ -17,46 +16,49 @@ def enviar_alerta(mensaje):
       'text': mensaje,
       'parse_mode': 'Markdown',
   }
-  requests.post(url, json=payload)
+  res = requests.post(url, json=payload)
+  print(f'Respuesta Telegram: {res.status_code} - {res.text}')
 
 
 def escanear_mercado_en_vivo():
   try:
-    # Rastreador dinámico sin listas:
-    # 1. Región EE.UU.
-    # 2. Precio actual <= $5
-    # 3. Volumen del día >= 500,000 acciones
-    q = EquityQuery('and', [
-        EquityQuery('eq', ['region', 'us']),
-        EquityQuery('lte', ['intradayprice', 5.0]),
-        EquityQuery('gte', ['dayvolume', 500000]),
-    ])
+    print('Iniciando rastreo de mercado...')
 
-    # Ejecutamos la búsqueda dinámica en vivo
-    response = yf.screen(q, sort_field='dayvolume', sort_type='desc', size=10)
-    quotes = response.get('quotes', [])
+    # 1. Obtenemos directamente la lista de acciones más activas en volumen del mercado
+    screening = yf.screen('most_actives', count=100)
+    quotes = screening.get('quotes', [])
 
     if not quotes:
-      return '⚠️ No se encontraron acciones por debajo de $5 con más de 500k de volumen en este momento.'
+      return '⚠️ No se obtuvieron datos del mercado en este momento.'
 
     resultados = []
-    for q_data in quotes[:3]:  # Cogemos las Top 3 con mayor volumen
-      symbol = q_data.get('symbol')
-      precio = q_data.get('regularMarketPrice', 0)
-      volumen = q_data.get('regularMarketVolume', 0)
-      cambio = q_data.get('regularMarketChangePercent', 0)
+    for q in quotes:
+      symbol = q.get('symbol', '')
+      precio = q.get('regularMarketPrice', 0.0)
+      volumen = q.get('regularMarketVolume', 0)
+      cambio = q.get('regularMarketChangePercent', 0.0)
 
-      resultados.append({
-          'ticker': symbol,
-          'precio': precio,
-          'volumen': volumen,
-          'cambio': cambio,
-      })
+      # FILTRO: Acciones de menos o igual a $5 y con más de 500k de volumen
+      if 0 < precio <= 5.0 and volumen >= 500000:
+        resultados.append({
+            'ticker': symbol,
+            'precio': precio,
+            'volumen': volumen,
+            'cambio': cambio,
+        })
 
-    mensaje = '🔥 *TOP 3 SCALPING EN VIVO (MERCADO REAL)* 🔥\n'
-    mensaje += '📌 *Filtros:* Precio < $5 | Volumen > 500k\n\n'
+    if not resultados:
+      return '⚠️ No hay acciones por debajo de $5 entre las más activas con volumen > 500k.'
 
-    for i, item in enumerate(resultados, 1):
+    # Ordenamos por mayor volumen de negociación
+    resultados_ordenados = sorted(
+        resultados, key=lambda x: x['volumen'], reverse=True
+    )[:3]
+
+    mensaje = '🔥 *TOP 3 SCALPING EN VIVO (< $5)* 🔥\n'
+    mensaje += '📌 *Filtro:* Precio ≤ $5 | Vol > 500k\n\n'
+
+    for i, item in enumerate(resultados_ordenados, 1):
       signo = '+' if item['cambio'] > 0 else ''
       mensaje += (
           f"*{i}. {item['ticker']}* ➔ `${item['precio']:.2f}`\n"
@@ -64,13 +66,14 @@ def escanear_mercado_en_vivo():
           f" `{signo}{item['cambio']:.2f}%`\n\n"
       )
 
-    mensaje += '💡 *Escaneo directo del mercado sin lista predefinida.*'
+    mensaje += '💡 *Acciones con mayor liquidez rastreadas en vivo.*'
     return mensaje
 
   except Exception as e:
-    return f'❌ Error rastreando el mercado: {str(e)}'
+    return f'❌ Error al rastrear el mercado: {str(e)}'
 
 
 if __name__ == '__main__':
   reporte = escanear_mercado_en_vivo()
+  print('Enviando reporte...')
   enviar_alerta(reporte)
