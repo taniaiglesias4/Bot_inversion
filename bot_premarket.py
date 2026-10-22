@@ -1,7 +1,7 @@
 import os
-import pandas as pd
 import requests
 import yfinance as yf
+from yfinance import EquityQuery
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
@@ -20,80 +20,57 @@ def enviar_alerta(mensaje):
   requests.post(url, json=payload)
 
 
-def obtener_top_scalping_baratas():
-  # Lista ampliada de acciones populares de bajo precio (< 5$) con alta volatilidad para scalping
-  watchlist_baratas = [
-      'NIO',
-      'SIRI',
-      'PLUG',
-      'SOFI',
-      'F',
-      'PTON',
-      'INTC',
-      'SNAP',
-      'NOK',
-      'AMC',
-      'GME',
-      'MULN',
-      'VERV',
-      'OPEN',
-      'TAL',
-      'BITF',
-  ]
-  datos_mercado = []
+def escanear_mercado_en_vivo():
+  try:
+    # Rastreador dinámico sin listas:
+    # 1. Región EE.UU.
+    # 2. Precio actual <= $5
+    # 3. Volumen del día >= 500,000 acciones
+    q = EquityQuery('and', [
+        EquityQuery('eq', ['region', 'us']),
+        EquityQuery('lte', ['intradayprice', 5.0]),
+        EquityQuery('gte', ['dayvolume', 500000]),
+    ])
 
-  for ticker in watchlist_baratas:
-    try:
-      stock = yf.Ticker(ticker)
-      hist = stock.history(period='1d', interval='5m')  # Datos intradía
-      if hist.empty:
-        continue
+    # Ejecutamos la búsqueda dinámica en vivo
+    response = yf.screen(q, sort_field='dayvolume', sort_type='desc', size=10)
+    quotes = response.get('quotes', [])
 
-      precio_actual = hist['Close'].iloc[-1]
-      volumen_hoy = hist['Volume'].sum()
+    if not quotes:
+      return '⚠️ No se encontraron acciones por debajo de $5 con más de 500k de volumen en este momento.'
 
-      # FILTRO: Solo acciones de menos de 5 dólares
-      if precio_actual <= 5.0:
-        # Calculamos una variación rápida o volatilidad basada en el rango intradía
-        max_sesion = hist['High'].max()
-        min_sesion = hist['Low'].min()
-        rango_volatilidad = (
-            ((max_sesion - min_sesion) / min_sesion) * 100
-            if min_sesion > 0
-            else 0
-        )
+    resultados = []
+    for q_data in quotes[:3]:  # Cogemos las Top 3 con mayor volumen
+      symbol = q_data.get('symbol')
+      precio = q_data.get('regularMarketPrice', 0)
+      volumen = q_data.get('regularMarketVolume', 0)
+      cambio = q_data.get('regularMarketChangePercent', 0)
 
-        datos_mercado.append({
-            'ticker': ticker,
-            'precio': precio_actual,
-            'volumen': volumen_hoy,
-            'volatilidad': rango_volatilidad,
-        })
-    except Exception:
-      continue
+      resultados.append({
+          'ticker': symbol,
+          'precio': precio,
+          'volumen': volumen,
+          'cambio': cambio,
+      })
 
-  df = pd.DataFrame(datos_mercado)
-  if df.empty:
-    return (
-        '⚠️ No se encontraron acciones por debajo de $5 con suficientes datos'
-        ' en este momento.'
-    )
+    mensaje = '🔥 *TOP 3 SCALPING EN VIVO (MERCADO REAL)* 🔥\n'
+    mensaje += '📌 *Filtros:* Precio < $5 | Volumen > 500k\n\n'
 
-  # Ordenar por mayor volumen y volatilidad intradía (ideal para scalping)
-  df_top3 = df.sort_values(by='volumen', ascending=False).head(3)
+    for i, item in enumerate(resultados, 1):
+      signo = '+' if item['cambio'] > 0 else ''
+      mensaje += (
+          f"*{i}. {item['ticker']}* ➔ `${item['precio']:.2f}`\n"
+          f"   📊 Vol: `{item['volumen']:,.0f}` | 🚀 Var:"
+          f" `{signo}{item['cambio']:.2f}%`\n\n"
+      )
 
-  mensaje = '⚡ *TOP 3 SCALPING (< $5) - MERCADO ABIERTO* ⚡\n\n'
-  for i, row in enumerate(df_top3.iterrows(), 1):
-    data = row[1]
-    mensaje += (
-        f"*{i}. {data['ticker']}* ➔ Precio: `${data['precio']:.2f}`\n"
-        f"   📊 Vol: `{data['volumen']:,.0f}` | Rango: `+{data['volatilidad']:.2f}%`\n\n"
-    )
+    mensaje += '💡 *Escaneo directo del mercado sin lista predefinida.*'
+    return mensaje
 
-  mensaje += '💡 *Ideal para buscar patrones de rotura en gráficos de 1m o 5m.*'
-  return mensaje
+  except Exception as e:
+    return f'❌ Error rastreando el mercado: {str(e)}'
 
 
 if __name__ == '__main__':
-  resultado = obtener_top_scalping_baratas()
-  enviar_alerta(resultado)
+  reporte = escanear_mercado_en_vivo()
+  enviar_alerta(reporte)
