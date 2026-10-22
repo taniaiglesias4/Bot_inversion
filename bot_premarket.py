@@ -19,28 +19,31 @@ def enviar_alerta(mensaje):
   requests.post(url, json=payload)
 
 
-def escanear_ganadores_dinamicos():
+def escanear_mercado_100_dinamico():
   try:
-    # Obtenemos las acciones con mayores ganancias y más activas del día en tiempo real
-    gainers = yf.DayGainers()
-    actives = yf.MostActive()
+    # Consultamos la API pública de Yahoo Finance en tiempo real para obtener tendencias (SIN LISTAS)
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    url = 'https://query1.finance.yahoo.com/v1/finance/trending/us?count=50'
 
-    tickers = []
-    if not gainers.empty:
-      tickers.extend(gainers.index.tolist())
-    if not actives.empty:
-      tickers.extend(actives.index.tolist())
-
-    tickers_unicos = list(set(tickers))
-
-    if not tickers_unicos:
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
       return (
-          '⚠️ No se pudieron obtener datos de mercado dinámicos en este'
-          ' momento.'
+          '⚠️ No se pudo conectar con el servicio de tendencias de mercado.'
       )
 
+    data = response.json()
+    finance_results = data.get('finance', {}).get('result', [])
+    if not finance_results:
+      return '⚠️ No hay datos de mercado disponibles ahora mismo.'
+
+    quotes = finance_results[0].get('quotes', [])
+    tickers_dinamicos = [q.get('symbol') for q in quotes if q.get('symbol')]
+
+    if not tickers_dinamicos:
+      return '⚠️ No se encontraron activos en tendencia en este momento.'
+
     resultados = []
-    for symbol in tickers_unicos:
+    for symbol in tickers_dinamicos:
       try:
         stock = yf.Ticker(symbol)
         hist = stock.history(period='1d', interval='5m')
@@ -48,11 +51,11 @@ def escanear_ganadores_dinamicos():
           continue
 
         precio_actual = hist['Close'].iloc[-1]
-        volumen_total = hist['Volume'].sum()
         precio_apertura = hist['Open'].iloc[0]
+        volumen_total = hist['Volume'].sum()
 
-        # FILTROS DE SCALPING: Menos de $5 y volumen mínimo de 300k
-        if 0 < precio_actual <= 5.0 and volumen_total >= 300000:
+        # Filtro estricto para scalping: Menos de $5 y volumen mínimo
+        if 0 < precio_actual <= 5.0 and volumen_total >= 200000:
           cambio_pct = (
               ((precio_actual - precio_apertura) / precio_apertura) * 100
               if precio_apertura > 0
@@ -69,18 +72,18 @@ def escanear_ganadores_dinamicos():
         continue
 
     if not resultados:
-      return (
-          '⚠️ No se encontraron acciones por debajo de $5 con suficiente'
-          ' volumen y movimiento hoy.'
-      )
+      return '⚠️ Ninguna acción en tendencia actual cumple con precio ≤ $5 y volumen requerido.'
 
-    # Ordenar por mayor variación porcentual de la sesión
+    # Ordenar por el mayor porcentaje de cambio positivo
     resultados_ordenados = sorted(
         resultados, key=lambda x: x['cambio'], reverse=True
     )[:3]
 
-    mensaje = '🚀 *TOP 3 SCALPING DINÁMICO (< $5)* 🚀\n'
-    mensaje += '📌 *Filtro:* Precio ≤ $5 | Alta Actividad\n\n'
+    mensaje = '🔥 *TOP 3 SCALPING 100% DINÁMICO (< $5)* 🔥\n'
+    mensaje += (
+        '📌 *Fuente:* Tendencias en vivo | *Filtro:* Precio ≤ $5 y buen'
+        ' volumen\n\n'
+    )
 
     for i, item in enumerate(resultados_ordenados, 1):
       signo = '+' if item['cambio'] > 0 else ''
@@ -90,13 +93,13 @@ def escanear_ganadores_dinamicos():
           f" `{item['volumen']:,.0f}`\n\n"
       )
 
-    mensaje += '💡 *Escaneado automáticamente en directo desde el mercado.*'
+    mensaje += '💡 *Escaneo puramente dinámico sin listas previas.*'
     return mensaje
 
   except Exception as e:
-    return f'❌ Error en el escáner dinámico: {str(e)}'
+    return f'❌ Error en el escáner: {str(e)}'
 
 
 if __name__ == '__main__':
-  reporte = escanear_ganadores_dinamicos()
+  reporte = escanear_mercado_100_dinamico()
   enviar_alerta(reporte)
