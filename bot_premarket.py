@@ -16,64 +16,87 @@ def enviar_alerta(mensaje):
       'text': mensaje,
       'parse_mode': 'Markdown',
   }
-  res = requests.post(url, json=payload)
-  print(f'Respuesta Telegram: {res.status_code} - {res.text}')
+  requests.post(url, json=payload)
 
 
-def escanear_mercado_en_vivo():
+def escanear_ganadores_dinamicos():
   try:
-    print('Iniciando rastreo de mercado...')
+    # Obtenemos las acciones con mayores ganancias y más activas del día en tiempo real
+    gainers = yf.DayGainers()
+    actives = yf.MostActive()
 
-    # 1. Obtenemos directamente la lista de acciones más activas en volumen del mercado
-    screening = yf.screen('most_actives', count=100)
-    quotes = screening.get('quotes', [])
+    tickers = []
+    if not gainers.empty:
+      tickers.extend(gainers.index.tolist())
+    if not actives.empty:
+      tickers.extend(actives.index.tolist())
 
-    if not quotes:
-      return '⚠️ No se obtuvieron datos del mercado en este momento.'
+    tickers_unicos = list(set(tickers))
+
+    if not tickers_unicos:
+      return (
+          '⚠️ No se pudieron obtener datos de mercado dinámicos en este'
+          ' momento.'
+      )
 
     resultados = []
-    for q in quotes:
-      symbol = q.get('symbol', '')
-      precio = q.get('regularMarketPrice', 0.0)
-      volumen = q.get('regularMarketVolume', 0)
-      cambio = q.get('regularMarketChangePercent', 0.0)
+    for symbol in tickers_unicos:
+      try:
+        stock = yf.Ticker(symbol)
+        hist = stock.history(period='1d', interval='5m')
+        if hist.empty:
+          continue
 
-      # FILTRO: Acciones de menos o igual a $5 y con más de 500k de volumen
-      if 0 < precio <= 5.0 and volumen >= 500000:
-        resultados.append({
-            'ticker': symbol,
-            'precio': precio,
-            'volumen': volumen,
-            'cambio': cambio,
-        })
+        precio_actual = hist['Close'].iloc[-1]
+        volumen_total = hist['Volume'].sum()
+        precio_apertura = hist['Open'].iloc[0]
+
+        # FILTROS DE SCALPING: Menos de $5 y volumen mínimo de 300k
+        if 0 < precio_actual <= 5.0 and volumen_total >= 300000:
+          cambio_pct = (
+              ((precio_actual - precio_apertura) / precio_apertura) * 100
+              if precio_apertura > 0
+              else 0
+          )
+
+          resultados.append({
+              'ticker': symbol,
+              'precio': precio_actual,
+              'volumen': volumen_total,
+              'cambio': cambio_pct,
+          })
+      except Exception:
+        continue
 
     if not resultados:
-      return '⚠️ No hay acciones por debajo de $5 entre las más activas con volumen > 500k.'
+      return (
+          '⚠️ No se encontraron acciones por debajo de $5 con suficiente'
+          ' volumen y movimiento hoy.'
+      )
 
-    # Ordenamos por mayor volumen de negociación
+    # Ordenar por mayor variación porcentual de la sesión
     resultados_ordenados = sorted(
-        resultados, key=lambda x: x['volumen'], reverse=True
+        resultados, key=lambda x: x['cambio'], reverse=True
     )[:3]
 
-    mensaje = '🔥 *TOP 3 SCALPING EN VIVO (< $5)* 🔥\n'
-    mensaje += '📌 *Filtro:* Precio ≤ $5 | Vol > 500k\n\n'
+    mensaje = '🚀 *TOP 3 SCALPING DINÁMICO (< $5)* 🚀\n'
+    mensaje += '📌 *Filtro:* Precio ≤ $5 | Alta Actividad\n\n'
 
     for i, item in enumerate(resultados_ordenados, 1):
       signo = '+' if item['cambio'] > 0 else ''
       mensaje += (
           f"*{i}. {item['ticker']}* ➔ `${item['precio']:.2f}`\n"
-          f"   📊 Vol: `{item['volumen']:,.0f}` | 🚀 Var:"
-          f" `{signo}{item['cambio']:.2f}%`\n\n"
+          f"   🚀 Var: `{signo}{item['cambio']:.2f}%` | 📊 Vol:"
+          f" `{item['volumen']:,.0f}`\n\n"
       )
 
-    mensaje += '💡 *Acciones con mayor liquidez rastreadas en vivo.*'
+    mensaje += '💡 *Escaneado automáticamente en directo desde el mercado.*'
     return mensaje
 
   except Exception as e:
-    return f'❌ Error al rastrear el mercado: {str(e)}'
+    return f'❌ Error en el escáner dinámico: {str(e)}'
 
 
 if __name__ == '__main__':
-  reporte = escanear_mercado_en_vivo()
-  print('Enviando reporte...')
+  reporte = escanear_ganadores_dinamicos()
   enviar_alerta(reporte)
